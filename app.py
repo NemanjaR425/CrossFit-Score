@@ -45,7 +45,7 @@ if submit_button:
             updated_df = pd.concat([existing_data, new_row], ignore_index=True)
             
             # Save back to Google Sheets
-            conn.update(data=updated_df)
+           conn.update(data=updated_df)
             
             st.success(f"Score for Athlete #{athlete_id} saved!")
             st.balloons()
