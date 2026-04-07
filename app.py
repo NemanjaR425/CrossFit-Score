@@ -21,8 +21,12 @@ with st.form("score_entry_form", clear_on_submit=True):
     selected_athlete = st.selectbox("Select Athlete", athlete_list)
     workout = st.selectbox("Select Workout", ["WOD 1", "WOD 2", "WOD 3"])
     score = st.number_input("Result (Reps or Seconds)", min_value=0, step=1)
+    
+    # ADDED: Tell the app how to sort THIS specific WOD
+    is_time_based = st.checkbox("Is this a TIME workout? (Lowest score wins)")
+    
     password = st.text_input("Staff Password", type="password")
-    submit_button = st.form_submit_button("SAVE SCORE")
+    submit_button = st.form_submit_button("SAVE & SORT LEADERBOARD")
 
 if submit_button:
     if password == "HN2026":
@@ -38,44 +42,38 @@ if submit_button:
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }])
             
+            # 1. Pull the current sheet
             existing_scores = conn.read(worksheet="Scores", ttl=0)
-            updated_scores = pd.concat([existing_scores, new_entry], ignore_index=True)
-            conn.update(worksheet="Scores", data=updated_scores)
             
-            st.success(f"Score for {a_name} saved!")
+            # 2. Combine with new score
+            all_scores = pd.concat([existing_scores, new_entry], ignore_index=True)
+            
+            # 3. SORT THE DATA BEFORE SENDING TO GOOGLE
+            # If it's time-based, 10 is better than 20 (Ascending). 
+            # If it's reps, 20 is better than 10 (Descending).
+            if is_time_based:
+                sorted_all = all_scores.sort_values(by=["Workout", "Score"], ascending=[True, True])
+            else:
+                sorted_all = all_scores.sort_values(by=["Workout", "Score"], ascending=[True, False])
+            
+            # 4. OVERWRITE THE SHEET WITH THE SORTED LIST
+            conn.update(worksheet="Scores", data=sorted_all)
+            
+            st.success(f"Score for {a_name} saved and Sheet re-sorted!")
+            st.balloons()
         except Exception as e:
             st.error(f"Error: {e}")
     else:
         st.error("Wrong Password")
 
-# --- THE DYNAMIC LEADERBOARD ---
+# --- THE BIG SCREEN DISPLAY ---
 st.write("---")
-st.subheader("📊 Live Leaderboard")
-
-# Let the user choose how to sort the big screen
-sort_type = st.radio("Scoring Type:", ["Highest Score Wins (Reps/KG)", "Lowest Score Wins (Time)"], horizontal=True)
-
+st.subheader("📊 Live Sorted Leaderboard")
 try:
-    # Pull fresh data
     live_data = conn.read(worksheet="Scores", ttl=0)
-    
     if not live_data.empty:
-        # Filter by workout if you want to see specific WOD standings
-        selected_wod = st.selectbox("Filter by Workout:", ["All Workouts"] + list(live_data['Workout'].unique()))
-        
-        display_df = live_data.copy()
-        if selected_wod != "All Workouts":
-            display_df = display_df[display_df['Workout'] == selected_wod]
-
-        # Apply Sorting Logic
-        if sort_type == "Highest Score Wins (Reps/KG)":
-            sorted_df = display_df.sort_values(by="Score", ascending=False)
-        else:
-            sorted_df = display_df.sort_values(by="Score", ascending=True)
-
-        # Show the board
-        st.table(sorted_df[["Athlete_ID", "Name", "Workout", "Score"]])
+        st.table(live_data[["Athlete_ID", "Name", "Workout", "Score"]])
     else:
-        st.info("No scores recorded yet.")
+        st.info("No scores yet.")
 except:
     st.info("Waiting for data...")
