@@ -5,61 +5,56 @@ from datetime import datetime
 
 st.set_page_config(page_title="HN CrossFit Live", layout="centered")
 
-# 1. Connect to Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 2. Load Athlete List from the 'Athletes' tab
+# --- LOAD ATHLETES ---
 try:
-    # We pull the names you entered in the Google Sheet
     athlete_df = conn.read(worksheet="Athletes")
-    # Create a list like "1 - Nemanja Ristic" for the dropdown
     athlete_list = [f"{row['Athlete_ID']} - {row['Name']}" for index, row in athlete_df.iterrows()]
-except:
+except Exception as e:
     athlete_list = ["No athletes found - Check your 'Athletes' tab"]
 
 st.title("🏆 Judge Score Entry")
 
-# 3. The Entry Form
 with st.form("score_entry_form", clear_on_submit=True):
-    
-    # Judge selects athlete from the list you pre-loaded
     selected_athlete = st.selectbox("Select Athlete", athlete_list)
-    
-    # Workout Selection (You can edit this list here)
-    workout = st.selectbox("Select Workout", ["WOD 1: Max Clean", "WOD 2: AMRAP 12", "WOD 3: Final"])
-    
-    score = st.number_input("Result (Reps or Total Seconds)", min_value=0, step=1)
-    
+    workout = st.selectbox("Select Workout", ["WOD 1", "WOD 2", "WOD 3"])
+    score = st.number_input("Result", min_value=0, step=1)
     password = st.text_input("Staff Password", type="password")
-    
     submit_button = st.form_submit_button("SAVE SCORE")
 
-# 4. Logic to Append (Not Overwrite)
 if submit_button:
     if password == "HN2026":
         try:
-            # Split the "1 - Nemanja Ristic" string back into ID and Name
+            # 1. Prepare New Data
             a_id = selected_athlete.split(" - ")[0]
             a_name = selected_athlete.split(" - ")[1]
             
             new_entry = pd.DataFrame([{
-                "Athlete_ID": a_id,
-                "Name": a_name,
-                "Workout": workout,
+                "Athlete_ID": str(a_id),
+                "Name": str(a_name),
+                "Workout": str(workout),
                 "Score": int(score),
                 "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }])
             
-            # CRITICAL: We read the 'Scores' tab specifically
-            existing_scores = conn.read(worksheet="Scores")
+            # 2. Read Existing Scores with Safety Check
+            try:
+                existing_scores = conn.read(worksheet="Scores")
+                # If existing_scores is empty or not a dataframe, create a clean one
+                if existing_scores is None or existing_scores.empty:
+                    updated_scores = new_entry
+                else:
+                    # GLUE THEM TOGETHER (This keeps the history)
+                    updated_scores = pd.concat([existing_scores, new_entry], ignore_index=True)
+            except:
+                # If the 'Scores' tab is totally blank, just use the new entry
+                updated_scores = new_entry
             
-            # Add the new score to the list of old scores
-            updated_scores = pd.concat([existing_scores, new_entry], ignore_index=True)
-            
-            # Save it back to the 'Scores' tab
+            # 3. Clear the old data and upload the NEW FULL LIST
             conn.update(worksheet="Scores", data=updated_scores)
             
-            st.success(f"Score for {a_name} saved!")
+            st.success(f"Score for {a_name} added to the list!")
             st.balloons()
             
         except Exception as e:
@@ -67,15 +62,16 @@ if submit_button:
     else:
         st.error("Wrong Password")
 
-# 5. Live Scoreboard (The "Big Screen" view)
+# --- THE LIVE BOARD ---
 st.write("---")
-st.subheader("📊 Current Scores")
+st.subheader("📊 All Recorded Scores")
 try:
-    # This pulls all scores so you can see the history
-    live_data = conn.read(worksheet="Scores")
+    # Always pull the freshest data from the sheet
+    live_data = conn.read(worksheet="Scores", ttl=0) # ttl=0 means 'don't use cache, show me live'
     if not live_data.empty:
-        st.dataframe(live_data.sort_values(by="Timestamp", ascending=False))
+        # Show newest scores at the top
+        st.dataframe(live_data.sort_values(by="Timestamp", ascending=False), use_container_width=True)
     else:
-        st.write("Waiting for first score...")
+        st.info("No scores recorded yet.")
 except:
-    st.write("Ready for competition.")
+    st.info("Waiting for data...")
